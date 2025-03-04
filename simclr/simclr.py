@@ -13,7 +13,7 @@ class SimCLR(nn.Module):
         d = cfg['d']
         h = cfg['h']
         u = cfg['u']
-        dim = cfg['dim']
+        # dim = cfg['dim']
         if cfg['arch'] == 'grafp':
             self.peak_extractor = GPUPeakExtractorv2(cfg)
         else:
