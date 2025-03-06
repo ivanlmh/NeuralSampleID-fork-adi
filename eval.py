@@ -203,7 +203,8 @@ def eval_faiss(emb_dir,
                test_ids='icassp',
                test_seq_len='1 3 5 9 11 19',
                k_probe=20,
-               n_centroids=64):
+               n_centroids=64,
+               return_histograms=False):
     """
     Segment/sequence-wise audio search experiment and evaluation: implementation based on FAISS.
     """
@@ -289,6 +290,9 @@ def eval_faiss(emb_dir,
     top10_exact = np.zeros((n_test, len(test_seq_len))).astype(np.int_)
     top100_exact = np.zeros((n_test, len(test_seq_len))).astype(np.int_)
 
+    # Store histograms if requested
+    query_histograms = []
+
     start_time = time.time()
     for ti, test_id in enumerate(test_ids):
 
@@ -337,6 +341,9 @@ def eval_faiss(emb_dir,
             # print(f"histogram for {q_id}; sl = {sl}: {dict(hist)}")
             pred = sorted(hist, key=hist.get, reverse=True)
             
+            if return_histograms:
+                query_histograms.append(dict(hist))
+
             if pred:
                 # Top-1 hit: 
                 top1_exact[ti, si] = int(q_id in gt[pred[0]])
@@ -372,4 +379,7 @@ def eval_faiss(emb_dir,
     np.save(f'{emb_dir}/test_ids.npy', test_ids)
     print(f'Saved test_ids, hit-rates and raw score to {emb_dir}.')
 
-    return hit_rates
+    if return_histograms:
+        return hit_rates, query_histograms
+    else:
+        return hit_rates
