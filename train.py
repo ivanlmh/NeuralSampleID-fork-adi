@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DataParallel
 from torch.cuda.amp import GradScaler
 import torchaudio
-torchaudio.set_audio_backend("soundfile")
+torchaudio.set_audio_backend("sox_io")
 
 
 from util import *
@@ -177,7 +177,7 @@ def main():
     train_dataset = NeuralSampleIDDataset(cfg=cfg, train=True, transform=cpu_augment)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,
-        num_workers=8, pin_memory=True, drop_last=True)
+        num_workers=0, pin_memory=True, drop_last=True)
     
     valid_dataset = NeuralSampleIDDataset(cfg=cfg, train=False)
     print("Creating validation dataloaders...")
