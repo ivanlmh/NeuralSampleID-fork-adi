@@ -45,13 +45,19 @@ class NeuralSampleIDDataset(Dataset):
     def __getitem__(self, idx):
 
         idx = self._get_safe_index(idx)
+        print(f"Ignored indices so far: {self.ignore_idx}")
 
         datapath = self.filenames[idx]
         try:
-            audio_dict = {stem: torchaudio.load(path)[0].mean(dim=0) for stem, path in datapath.items()}
+            audio_dict = {}
+            for stem, path in datapath.items():
+                print(f"Loading {stem}: {path}")  # Add this debug print
+                audio, _ = torchaudio.load(path)
+                audio_dict[stem] = audio.mean(dim=0)
             sr = torchaudio.load(datapath['mix'])[1]
-        except Exception:
-            print("Error loading:", datapath)
+
+        except Exception as e:
+            print(f"Error loading: {datapath}: {e}")
             self.error_counts[idx] = self.error_counts.get(idx, 0) + 1
             if self.error_counts[idx] > self.error_threshold:
                 self.ignore_idx.add(idx)
