@@ -51,7 +51,7 @@ class NeuralSampleIDDataset(Dataset):
         try:
             audio_dict = {}
             for stem, path in datapath.items():
-                print(f"Loading {stem}: {path}")  # Add this debug print
+                # print(f"Loading {stem}: {path}")  # Add this debug print
                 audio, _ = torchaudio.load(path)
                 audio_dict[stem] = audio.mean(dim=0)
             sr = torchaudio.load(datapath['mix'])[1]
