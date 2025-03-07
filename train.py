@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DataParallel
 from torch.cuda.amp import GradScaler
 import torchaudio
-torchaudio.set_audio_backend("sox_io")
+# torchaudio.set_audio_backend("soundfile")
 
 
 from util import *
