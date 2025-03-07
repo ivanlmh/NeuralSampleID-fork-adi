@@ -11,7 +11,7 @@ debugpy==1.8.5
 decorator==5.1.1
 exceptiongroup==1.2.2
 executing==2.0.1
-faiss-gpu==1.7.2
+# faiss-gpu==1.7.2
 filelock==3.14.0
 fsspec==2024.3.1
 grpcio==1.63.0
@@ -76,7 +76,7 @@ pyzmq==26.1.0
 requests==2.31.0
 safetensors==0.4.3
 scikit-learn==1.4.2
-scipy==1.13.0
+# scipy==1.13.0
 six==1.16.0
 soundfile==0.12.1
 soxr==0.3.7

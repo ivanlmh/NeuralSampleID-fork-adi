@@ -98,6 +98,7 @@ DC_release: [0.05, 1.0]
 
 # time_mask: 8
 # freq_mask: 16
+beta: 0.0
 
 
 n_frames: 128 #10 #32 # depends on the spectrogram parameters (10 is for Music2latent), old nerualFP was 32, now 128

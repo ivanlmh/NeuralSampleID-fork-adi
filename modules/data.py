@@ -132,7 +132,7 @@ class NeuralSampleIDDataset(Dataset):
     
 
 class Sample100Dataset(Dataset):
-    def __init__(self, cfg, path, annot_path, transform=None, mode=None):
+    def __init__(self, cfg, path, annot_path, transform=None, mode=None, stem='mix'):
         self.path = path
         self.annot_path = annot_path
         self.norm = cfg['norm']
@@ -144,6 +144,7 @@ class Sample100Dataset(Dataset):
         self.transform = transform
         self.mode = mode
         self.cfg = cfg
+        self.stem = stem
 
         if self.mode == "dummy":
             self.filenames = load_index(cfg, path, mode="valid")
@@ -182,7 +183,16 @@ class Sample100Dataset(Dataset):
 
             rel = self.annotations[idx]
             fname = rel['query_file']
-            query_path = os.path.join(self.path, fname+'.mp3')
+
+            # Construct path based on stem type
+            if self.stem == 'mix':
+                query_path = os.path.join(self.path, fname+'.mp3')
+            else:
+                # Path to the stem file
+                htdemucs_dir = os.path.join(os.path.dirname(self.path), 'htdemucs')
+                query_path = os.path.join(htdemucs_dir, fname, f"{self.stem}.mp3")
+            
+
             try:
                 audio, sr = torchaudio.load(query_path)
             except Exception as e:
@@ -218,7 +228,15 @@ class Sample100Dataset(Dataset):
         elif self.mode == "query_full":
                 
                 fname = self.query_names[idx]
-                query_path = os.path.join(self.path, fname+'.mp3')
+
+                # Construct path based on stem type
+                if self.stem == 'mix':
+                    query_path = os.path.join(self.path, fname+'.mp3')
+                else:
+                    # Path to the stem file 
+                    htdemucs_dir = os.path.join(os.path.dirname(self.path), 'htdemucs')
+                    query_path = os.path.join(htdemucs_dir, fname, f"{self.stem}.mp3")
+                
                 try:
                     audio, sr = torchaudio.load(query_path)
                 except Exception as e:
@@ -237,7 +255,15 @@ class Sample100Dataset(Dataset):
 
             fname = self.ref_names[idx]
             # fname = rel['ref_file']
-            ref_path = os.path.join(self.path, fname+'.mp3')
+
+            # Construct path based on stem type
+            if self.stem == 'mix':
+                ref_path = os.path.join(self.path, fname+'.mp3')
+            else:
+                # Path to the stem file 
+                htdemucs_dir = os.path.join(os.path.dirname(self.path), 'htdemucs')
+                ref_path = os.path.join(htdemucs_dir, fname, f"{self.stem}.mp3")
+
             assert os.path.exists(ref_path), f"File not found: {ref_path}"
             try:
                 audio, sr = torchaudio.load(ref_path)
