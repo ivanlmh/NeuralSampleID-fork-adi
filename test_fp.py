@@ -60,6 +60,8 @@ parser.add_argument('--map', action='store_true', default=False)
 parser.add_argument('--k', default=3, type=int)
 parser.add_argument('--test_ids', default='1000', type=str)
 
+parser.add_argument('--stem_eval', action='store_true', default=False, help='Perform stem-wise evaluation')
+
 device = torch.device('cuda' if torch.cuda.is_available else 'cpu')
 
 
@@ -211,6 +213,291 @@ def create_dummy_db(dataloader, augment, model, output_root_dir, fname='dummy_db
     arr.flush(); del(arr)   #Close memmap
 
     np.save(f'{output_root_dir}/{fname}_shape.npy', arr_shape)
+
+
+def evaluate_stems(cfg, model, test_augment, output_root_dir, annot_path, test_dir, index_type='ivfpq'):
+    """
+    Evaluate each stem type separately and combine results
+    """
+    stem_types = ['bass', 'drums', 'vocals', 'other', 'mix']
+    stem_results = {}
+    
+    
+    for stem in stem_types:
+        print(f"\n=== Evaluating {stem.upper()} stems ===")
+        
+        # Create datasets for this stem
+        query_dataset = Sample100Dataset(cfg, path=test_dir, annot_path=annot_path, 
+                                         mode="query", stem=stem)
+        ref_dataset = Sample100Dataset(cfg, path=test_dir, annot_path=annot_path, 
+                                       mode="ref", stem=stem)
+        
+        # Create fingerprint directory for this stem
+        stem_dir = os.path.join(output_root_dir, f"stem_{stem}")
+        os.makedirs(stem_dir, exist_ok=True)
+        
+        # Process reference audio files individually to avoid batch size issues
+        print("Creating reference fingerprints...")
+        ref_lookup = []
+        ref_fingerprints = []
+        
+        for idx in range(len(ref_dataset)):
+            try:
+                fname, audio = ref_dataset[idx]
+                audio = audio.unsqueeze(0).to(device)  # Add batch dimension
+                
+                x_i, _ = test_augment(audio, None)
+                
+                # Process in small chunks to avoid memory issues
+                max_size = 32  # Smaller batch size
+                x_list = torch.split(x_i, max_size, dim=0)
+                
+                for x in x_list:
+                    with torch.no_grad():
+                        try:
+                            _, _, z_i, _ = model(x.to(device), x.to(device))
+                            ref_fingerprints.append(z_i.detach().cpu().numpy())
+                            ref_lookup.extend([fname] * z_i.shape[0])
+                            
+                            if idx % 20 == 0:
+                                print(f"Processed ref {idx}/{len(ref_dataset)}, shape: {z_i.shape}")
+                        except Exception as e:
+                            print(f"Error processing reference {fname}: {e}")
+                            continue
+            except Exception as e:
+                print(f"Error loading reference at index {idx}: {e}")
+                continue
+        
+        # Process query audio files
+        print("Creating query fingerprints...")
+        query_lookup = []
+        query_fingerprints = []
+        
+        for idx in range(len(query_dataset)):
+            try:
+                fname, audio = query_dataset[idx]
+                audio = audio.unsqueeze(0).to(device)  # Add batch dimension
+                
+                x_i, _ = test_augment(audio, None)
+                
+                # Process in small chunks
+                max_size = 32
+                x_list = torch.split(x_i, max_size, dim=0)
+                
+                for x in x_list:
+                    with torch.no_grad():
+                        try:
+                            _, _, z_i, _ = model(x.to(device), x.to(device))
+                            query_fingerprints.append(z_i.detach().cpu().numpy())
+                            query_lookup.extend([fname + "_" + str(idx)] * z_i.shape[0])
+                            
+                            if idx % 20 == 0:
+                                print(f"Processed query {idx}/{len(query_dataset)}, shape: {z_i.shape}")
+                        except Exception as e:
+                            print(f"Error processing query {fname}: {e}")
+                            continue
+            except Exception as e:
+                print(f"Error loading query at index {idx}: {e}")
+                continue
+        
+        # Save fingerprints and lookup tables
+        if ref_fingerprints and query_fingerprints:
+            # Concatenate fingerprints
+            ref_fp = np.concatenate(ref_fingerprints)
+            query_fp = np.concatenate(query_fingerprints)
+            
+            # Save reference fingerprints
+            ref_shape = (len(ref_fp), ref_fp.shape[1])
+            ref_arr = np.memmap(f'{stem_dir}/ref_db.mm',
+                              dtype='float32',
+                              mode='w+',
+                              shape=ref_shape)
+            ref_arr[:] = ref_fp[:]
+            ref_arr.flush()
+            del ref_arr
+            
+            np.save(f'{stem_dir}/ref_db_shape.npy', ref_shape)
+            json.dump(ref_lookup, open(f'{stem_dir}/ref_db_lookup.json', 'w'))
+            
+            # Save query fingerprints
+            query_shape = (len(query_fp), query_fp.shape[1])
+            query_arr = np.memmap(f'{stem_dir}/query_db.mm',
+                                dtype='float32',
+                                mode='w+',
+                                shape=query_shape)
+            query_arr[:] = query_fp[:]
+            query_arr.flush()
+            del query_arr
+            
+            np.save(f'{stem_dir}/query_db_shape.npy', query_shape)
+            json.dump(query_lookup, open(f'{stem_dir}/query_db_lookup.json', 'w'))
+            
+            # Run evaluation
+            try:
+                hit_rates, histograms = eval_faiss(emb_dir=stem_dir, emb_dummy_dir=output_root_dir, index_type=index_type, 
+                                                 nogpu=True, return_histograms=True)
+                
+                stem_results[stem] = {
+                    'hit_rates': hit_rates,
+                    'histograms': histograms
+                }
+                
+                print(f"--- {stem.upper()} Results ---")
+                print(f'Top-1 exact hit rate = {hit_rates[0]}')
+                print(f'Top-3 exact hit rate = {hit_rates[1]}')
+                print(f'Top-10 exact hit rate = {hit_rates[2]}')
+            except Exception as e:
+                print(f"Error evaluating {stem} stems: {e}")
+        else:
+            print(f"No valid fingerprints for {stem} stems")
+    
+    return stem_results
+
+
+# def evaluate_stems(cfg, model, test_augment, output_root_dir, annot_path, test_dir, index_type='ivfpq'):
+    # """
+    # Evaluate each stem type separately and combine results
+    # """
+    # stem_types = ['bass', 'drums', 'vocals', 'other', 'mix']
+    # stem_results = {}
+    
+    # for stem in stem_types:
+    #     print(f"\n=== Evaluating {stem.upper()} stems ===")
+        
+    #     # Create datasets for this stem
+    #     query_dataset = Sample100Dataset(cfg, path=test_dir, annot_path=annot_path, 
+    #                                      mode="query", stem=stem)
+    #     ref_dataset = Sample100Dataset(cfg, path=test_dir, annot_path=annot_path, 
+    #                                     mode="ref", stem=stem)
+        
+    #     # Create DataLoader instances
+    #     query_loader = DataLoader(query_dataset, batch_size=1, 
+    #                              shuffle=False, num_workers=4, 
+    #                              pin_memory=True, drop_last=False)
+        
+    #     ref_loader = DataLoader(ref_dataset, batch_size=1, 
+    #                            shuffle=False, num_workers=4, 
+    #                            pin_memory=True, drop_last=False)
+        
+    #     # Create fingerprints directory for this stem
+    #     stem_dir = os.path.join(output_root_dir, f"stem_{stem}")
+    #     os.makedirs(stem_dir, exist_ok=True)
+        
+    #     # Create reference and query fingerprints
+    #     create_ref_db(ref_loader, augment=test_augment,
+    #                  model=model, output_root_dir=stem_dir, verbose=True)
+        
+    #     create_query_db(query_loader, augment=test_augment,
+    #                    model=model, output_root_dir=stem_dir, verbose=True)
+        
+    #     # Evaluate
+    #     hit_rates = eval_faiss(emb_dir=stem_dir, index_type=index_type, nogpu=True)
+        
+    #     stem_results[stem] = hit_rates
+        
+    #     print(f"--- {stem.upper()} Results ---")
+    #     print(f'Top-1 exact hit rate = {hit_rates[0]}')
+    #     print(f'Top-3 exact hit rate = {hit_rates[1]}')
+    #     print(f'Top-10 exact hit rate = {hit_rates[2]}')
+    
+    # return stem_results
+
+def evaluate_rankings(rankings, annotations):
+    """Evaluate combined rankings against ground truth"""
+    top1_exact = 0
+    top3_exact = 0
+    top10_exact = 0
+    
+    # Create ground truth mapping
+    gt_dict = {}
+    for ann in annotations:
+        query = ann['query_file']
+        ref = ann['ref_file']
+        if query not in gt_dict:
+            gt_dict[query] = []
+        gt_dict[query].append(ref)
+    
+    # Evaluate rankings
+    for query_id, refs in rankings.items():
+        # Get ground truth for this query
+        gt_refs = gt_dict.get(query_id, [])
+        
+        # Check for matches
+        if refs and any(r in gt_refs for r in refs[:1]):
+            top1_exact += 1
+        if refs and any(r in gt_refs for r in refs[:3]):
+            top3_exact += 1
+        if refs and any(r in gt_refs for r in refs[:10]):
+            top10_exact += 1
+    
+    # Calculate hit rates
+    total = len(rankings)
+    hit_rates = [
+        100.0 * top1_exact / total,
+        100.0 * top3_exact / total,
+        100.0 * top10_exact / total
+    ]
+    
+    return hit_rates
+
+def combine_stem_results(stem_results, annotations):
+    """
+    Combine results from all stems to generate a final ranking
+    Weighting can be adjusted based on your preference
+    """
+    # Create a combined scoring system
+    combined_scores = defaultdict(float)
+    
+    # Define weights for each stem (can be adjusted)
+    weights = {
+        'bass': 0.2, 
+        'drums': 0.2, 
+        'vocals': 0.2, 
+        'other': 0.2, 
+        'mix': 0.2
+    }
+    # weights = {
+    #     'bass': 0.25, 
+    #     'drums': 0.25, 
+    #     'vocals': 0.25, 
+    #     'other': 0.15, 
+    #     'mix': 0.1
+    # }
+    
+    for stem, results in stem_results.items():
+        # Get the lookup tables for query and reference
+        query_lookup = json.load(open(f'{output_root_dir}/stem_{stem}/query_db_lookup.json', 'r'))
+        ref_lookup = json.load(open(f'{output_root_dir}/stem_{stem}/ref_db_lookup.json', 'r'))
+        
+        # Process each query
+        for q_idx, q_id in enumerate(query_lookup):
+            # Get the histogram for this query
+            query_hist = results['histograms'][q_idx]
+            
+            # Apply weight to this stem's scores
+            for ref_id, score in query_hist.items():
+                combined_scores[(q_id, ref_id)] += score * weights[stem]
+    
+    # Create final rankings
+    final_rankings = {}
+    for (q_id, _), _ in combined_scores.items():
+        if q_id not in final_rankings:
+            final_rankings[q_id] = []
+            
+        # Get all refs for this query
+        refs = [(ref_id, combined_scores[(q_id, ref_id)]) for q_id, ref_id in combined_scores.keys() if q_id == q_id]
+        
+        # Sort by score
+        refs.sort(key=lambda x: x[1], reverse=True)
+        
+        # Store rankings
+        final_rankings[q_id] = [ref_id for ref_id, _ in refs]
+    
+    # Evaluate final rankings
+    hit_rates = evaluate_rankings(final_rankings, annotations)
+    
+    return hit_rates, final_rankings
+
 
 
 def main():
@@ -373,6 +660,26 @@ def main():
 
                 print("-------Test MAP-------")
                 print(f'Mean Average Precision (MAP@{k_map}): {map_score:.4f}')
+
+            if args.stem_eval:
+                print("\n=== Performing Stem-Based Evaluation ===")
+                stem_results = evaluate_stems(cfg, model, test_augment, fp_dir, annot_path, args.test_dir)
+                
+                # Load annotations for combined evaluation
+                with open(annot_path, 'r') as fp:
+                    annotations = json.load(fp)
+                
+                hit_rates, final_rankings = combine_stem_results(stem_results, annotations)
+                
+                print("\n=== Combined Stem Results ===")
+                print(f'Top-1 exact hit rate = {hit_rates[0]}')
+                print(f'Top-3 exact hit rate = {hit_rates[1]}')
+                print(f'Top-10 exact hit rate = {hit_rates[2]}')
+                
+                # Save combined results
+                np.save(f'{fp_dir}/combined_hit_rates.npy', hit_rates)
+                with open(f'{fp_dir}/final_rankings.json', 'w') as f:
+                    json.dump(final_rankings, f)
 
 
 if __name__ == '__main__':
