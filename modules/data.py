@@ -45,7 +45,10 @@ class NeuralSampleIDDataset(Dataset):
     def __getitem__(self, idx):
 
         idx = self._get_safe_index(idx)
-        print(f"Ignored indices so far: {self.ignore_idx}")
+
+        # Check if ignore_index is empty
+        if not self.ignore_idx:
+            print(f"Ignored indices so far: {self.ignore_idx}")
 
         datapath = self.filenames[idx]
         try:
