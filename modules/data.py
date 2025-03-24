@@ -286,6 +286,15 @@ class Sample100Dataset(Dataset):
             if not datapath.split('/')[-1].startswith('N'):
                 warnings.warn(f"filename not a dummy file: {datapath.split('/')[-1]}")
                 return self[idx + 1]
+
+            # Construct path based on stem type
+            if self.stem != 'mix':
+                # Path to the stem file 
+                htdemucs_dir = os.path.join(os.path.dirname(os.path.dirname(datapath)), 'htdemucs')
+                datapath = os.path.join(htdemucs_dir, fname, f"{self.stem}.mp3")
+
+            assert os.path.exists(datapath), f"File not found: {datapath}"
+
             try:
                 audio, sr = torchaudio.load(datapath)
             except Exception as e:
@@ -305,6 +314,21 @@ class Sample100Dataset(Dataset):
         # if self.norm is not None:
         #     norm_val = qtile_norm(audio_resampled, q=self.norm)
         #     x = x / norm_val
+
+        # add random noise
+        x += torch.randn_like(x) * 1e-5
+
+        # Check for silence
+        rms = torch.sqrt(torch.mean(x ** 2))
+        m = x.abs().max()
+        # print(f"rms={rms} / max={m}")
+        if m < self.silence:
+            print("Silence detected. Skipping...")
+            self.ignore_idx.add(idx)
+            next_idx = self._get_safe_index(idx)
+            return self[next_idx]
+
+
         
         clip_frames = int(self.sample_rate * self.dur)
         # if x.shape[-1] < clip_frames:

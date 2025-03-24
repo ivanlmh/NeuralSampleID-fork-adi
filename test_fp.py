@@ -15,6 +15,8 @@ import torchaudio
 import traceback
 torchaudio.set_audio_backend("soundfile")
 
+from collections import defaultdict
+
 
 
 from util import \
@@ -214,142 +216,82 @@ def create_dummy_db(dataloader, augment, model, output_root_dir, fname='dummy_db
 
     np.save(f'{output_root_dir}/{fname}_shape.npy', arr_shape)
 
-
 def evaluate_stems(cfg, model, test_augment, output_root_dir, annot_path, test_dir, index_type='ivfpq'):
     """
     Evaluate each stem type separately and combine results
+    Uses standard dataloader and creation functions for consistency
     """
-    stem_types = ['bass', 'drums', 'vocals', 'other', 'mix']
+    stem_types = ['bass']#, 'drums'] #, 'vocals', 'other', 'mix']
     stem_results = {}
     
+    # First, make sure dummy_db exists
+    dummy_path = 'data/sample_100.json'
     
     for stem in stem_types:
         print(f"\n=== Evaluating {stem.upper()} stems ===")
         
-        # Create datasets for this stem
-        query_dataset = Sample100Dataset(cfg, path=test_dir, annot_path=annot_path, 
-                                         mode="query", stem=stem)
-        ref_dataset = Sample100Dataset(cfg, path=test_dir, annot_path=annot_path, 
-                                       mode="ref", stem=stem)
-        
-        # Create fingerprint directory for this stem
+        # Create stem-specific directory
         stem_dir = os.path.join(output_root_dir, f"stem_{stem}")
         os.makedirs(stem_dir, exist_ok=True)
         
-        # Process reference audio files individually to avoid batch size issues
-        print("Creating reference fingerprints...")
-        ref_lookup = []
-        ref_fingerprints = []
+        # Create datasets for this stem
+        dummy_dataset = Sample100Dataset(cfg, path=dummy_path, annot_path=annot_path, 
+                                        mode="dummy", stem=stem)
+        query_dataset = Sample100Dataset(cfg, path=test_dir, annot_path=annot_path, 
+                                        mode="query", stem=stem)
+        ref_dataset = Sample100Dataset(cfg, path=test_dir, annot_path=annot_path, 
+                                      mode="ref", stem=stem)
         
-        for idx in range(len(ref_dataset)):
-            try:
-                fname, audio = ref_dataset[idx]
-                audio = audio.unsqueeze(0).to(device)  # Add batch dimension
-                
-                x_i, _ = test_augment(audio, None)
-                
-                # Process in small chunks to avoid memory issues
-                max_size = 32  # Smaller batch size
-                x_list = torch.split(x_i, max_size, dim=0)
-                
-                for x in x_list:
-                    with torch.no_grad():
-                        try:
-                            _, _, z_i, _ = model(x.to(device), x.to(device))
-                            ref_fingerprints.append(z_i.detach().cpu().numpy())
-                            ref_lookup.extend([fname] * z_i.shape[0])
-                            
-                            if idx % 20 == 0:
-                                print(f"Processed ref {idx}/{len(ref_dataset)}, shape: {z_i.shape}")
-                        except Exception as e:
-                            print(f"Error processing reference {fname}: {e}")
-                            continue
-            except Exception as e:
-                print(f"Error loading reference at index {idx}: {e}")
-                continue
+        # Create DataLoader instances
+        dummy_loader = DataLoader(dummy_dataset, batch_size=1,
+                                 shuffle=False, num_workers=4, 
+                                 pin_memory=True, drop_last=False)
+
+        query_loader = DataLoader(query_dataset, batch_size=1, 
+                                 shuffle=False, num_workers=4, 
+                                 pin_memory=True, drop_last=False)
         
-        # Process query audio files
-        print("Creating query fingerprints...")
-        query_lookup = []
-        query_fingerprints = []
+        ref_loader = DataLoader(ref_dataset, batch_size=1, 
+                               shuffle=False, num_workers=4, 
+                               pin_memory=True, drop_last=False)
         
-        for idx in range(len(query_dataset)):
-            try:
-                fname, audio = query_dataset[idx]
-                audio = audio.unsqueeze(0).to(device)  # Add batch dimension
-                
-                x_i, _ = test_augment(audio, None)
-                
-                # Process in small chunks
-                max_size = 32
-                x_list = torch.split(x_i, max_size, dim=0)
-                
-                for x in x_list:
-                    with torch.no_grad():
-                        try:
-                            _, _, z_i, _ = model(x.to(device), x.to(device))
-                            query_fingerprints.append(z_i.detach().cpu().numpy())
-                            query_lookup.extend([fname + "_" + str(idx)] * z_i.shape[0])
-                            
-                            if idx % 20 == 0:
-                                print(f"Processed query {idx}/{len(query_dataset)}, shape: {z_i.shape}")
-                        except Exception as e:
-                            print(f"Error processing query {fname}: {e}")
-                            continue
-            except Exception as e:
-                print(f"Error loading query at index {idx}: {e}")
-                continue
+        # Create reference and query fingerprints using standard functions
+        create_dummy_db(dummy_loader, augment=test_augment,
+                     model=model, output_root_dir=stem_dir, verbose=True, max_size=512)
+
+        create_ref_db(ref_loader, augment=test_augment,
+                     model=model, output_root_dir=stem_dir, verbose=True, max_size=512)
         
-        # Save fingerprints and lookup tables
-        if ref_fingerprints and query_fingerprints:
-            # Concatenate fingerprints
-            ref_fp = np.concatenate(ref_fingerprints)
-            query_fp = np.concatenate(query_fingerprints)
+        create_query_db(query_loader, augment=test_augment,
+                       model=model, output_root_dir=stem_dir, verbose=True, max_size=512)
+        
+        # Run evaluation using standard eval_faiss function
+        # Use parent directory's dummy_db
+        try:
+            hit_rates, histograms = eval_faiss(
+                emb_dir=stem_dir,
+                emb_dummy_dir=output_root_dir,  # Point to parent directory for dummy_db
+                index_type=index_type,
+                nogpu=True,
+                return_histograms=True
+            )
             
-            # Save reference fingerprints
-            ref_shape = (len(ref_fp), ref_fp.shape[1])
-            ref_arr = np.memmap(f'{stem_dir}/ref_db.mm',
-                              dtype='float32',
-                              mode='w+',
-                              shape=ref_shape)
-            ref_arr[:] = ref_fp[:]
-            ref_arr.flush()
-            del ref_arr
+            stem_results[stem] = {
+                'hit_rates': hit_rates,
+                'histograms': histograms
+            }
+
+            print(f"Type of histograms: {type(histograms)}")
+            print(histograms[:20])
+            print(len(histograms))
+            print(histograms.keys())
             
-            np.save(f'{stem_dir}/ref_db_shape.npy', ref_shape)
-            json.dump(ref_lookup, open(f'{stem_dir}/ref_db_lookup.json', 'w'))
-            
-            # Save query fingerprints
-            query_shape = (len(query_fp), query_fp.shape[1])
-            query_arr = np.memmap(f'{stem_dir}/query_db.mm',
-                                dtype='float32',
-                                mode='w+',
-                                shape=query_shape)
-            query_arr[:] = query_fp[:]
-            query_arr.flush()
-            del query_arr
-            
-            np.save(f'{stem_dir}/query_db_shape.npy', query_shape)
-            json.dump(query_lookup, open(f'{stem_dir}/query_db_lookup.json', 'w'))
-            
-            # Run evaluation
-            try:
-                hit_rates, histograms = eval_faiss(emb_dir=stem_dir, emb_dummy_dir=output_root_dir, index_type=index_type, 
-                                                 nogpu=True, return_histograms=True)
-                
-                stem_results[stem] = {
-                    'hit_rates': hit_rates,
-                    'histograms': histograms
-                }
-                
-                print(f"--- {stem.upper()} Results ---")
-                print(f'Top-1 exact hit rate = {hit_rates[0]}')
-                print(f'Top-3 exact hit rate = {hit_rates[1]}')
-                print(f'Top-10 exact hit rate = {hit_rates[2]}')
-            except Exception as e:
-                print(f"Error evaluating {stem} stems: {e}")
-        else:
-            print(f"No valid fingerprints for {stem} stems")
+            print(f"--- {stem.upper()} Results ---")
+            print(f'Top-1 exact hit rate = {hit_rates[0]}')
+            print(f'Top-3 exact hit rate = {hit_rates[1]}')
+            print(f'Top-10 exact hit rate = {hit_rates[2]}')
+        except Exception as e:
+            print(f"Error evaluating {stem} stems: {e}")
     
     return stem_results
 
@@ -440,58 +382,117 @@ def evaluate_rankings(rankings, annotations):
     
     return hit_rates
 
-def combine_stem_results(stem_results, annotations):
+def combine_stem_results(stem_results, annotations, output_root_dir):
     """
     Combine results from all stems to generate a final ranking
-    Weighting can be adjusted based on your preference
+    With robust error handling and verbose debugging
     """
     # Create a combined scoring system
     combined_scores = defaultdict(float)
     
-    # Define weights for each stem (can be adjusted)
+    # Define weights for each stem
     weights = {
-        'bass': 0.2, 
-        'drums': 0.2, 
-        'vocals': 0.2, 
-        'other': 0.2, 
-        'mix': 0.2
+        'bass': 0.5,  # Higher weight for bass since it's often the sampled element
+        'drums': 0.5, # Higher weight for drums since they're often sampled
+        'vocals': 0.0,  # Not using vocals for now until we add it to evaluation
+        'other': 0.0,   # Not using other for now until we add it to evaluation
+        'mix': 0.0      # Not using mix for now as we're focusing on stems
     }
-    # weights = {
-    #     'bass': 0.25, 
-    #     'drums': 0.25, 
-    #     'vocals': 0.25, 
-    #     'other': 0.15, 
-    #     'mix': 0.1
-    # }
     
+    processed_stems = []
+    
+    print("\n=== Processing stem results for combination ===")
+    # Process each stem that has results
     for stem, results in stem_results.items():
-        # Get the lookup tables for query and reference
-        query_lookup = json.load(open(f'{output_root_dir}/stem_{stem}/query_db_lookup.json', 'r'))
-        ref_lookup = json.load(open(f'{output_root_dir}/stem_{stem}/ref_db_lookup.json', 'r'))
+        print(f"\nProcessing {stem.upper()} stem results")
+        processed_stems.append(stem)
+
+        print(f"Type of results: {type(results)}")
+        print(f"Keys in results: {results.keys() if isinstance(results, dict) else 'Not a dictionary'}")
+
         
-        # Process each query
-        for q_idx, q_id in enumerate(query_lookup):
-            # Get the histogram for this query
-            query_hist = results['histograms'][q_idx]
+        try:
+            # Load lookup tables
+            query_lookup_path = f'{output_root_dir}/stem_{stem}/query_db_lookup.json'
+            ref_lookup_path = f'{output_root_dir}/stem_{stem}/ref_db_lookup.json'
             
-            # Apply weight to this stem's scores
-            for ref_id, score in query_hist.items():
-                combined_scores[(q_id, ref_id)] += score * weights[stem]
+            print(f"Loading query lookup from: {query_lookup_path}")
+            print(f"Loading ref lookup from: {ref_lookup_path}")
+            
+            query_lookup = json.load(open(query_lookup_path, 'r'))
+            ref_lookup = json.load(open(ref_lookup_path, 'r'))
+            
+            print(f"Query lookup has {len(query_lookup)} entries")
+            print("first three:", query_lookup[:3])
+            print(f"Reference lookup has {len(ref_lookup)} entries")
+            print("first three:", ref_lookup[:3])
+            
+            # Check if histograms is in the results
+            if 'histograms' not in results:
+                print(f"WARNING: No histograms found in {stem} results. Skipping.")
+                continue
+                
+            histograms = results['histograms']
+            print(f"Histogram data has {len(histograms)} entries")
+            
+            # Process queries
+            for q_idx, q_id in enumerate(query_lookup):
+                if q_idx >= len(histograms):
+                    print(f"WARNING: Query index {q_idx} exceeds histogram length {len(histograms)}. Skipping.")
+                    continue
+                    
+                # Get histogram for this query
+                query_hist = histograms[q_idx]
+                
+                # Extract query ID without the _number part
+                query_base_id = q_id.split('_')[0] if '_' in q_id else q_id
+                
+                # Debug output for first few entries
+                if q_idx < 3:
+                    print(f"Query ID: {q_id} (base: {query_base_id})")
+                    print(f"Top 3 matches: {sorted(query_hist.items(), key=lambda x: x[1], reverse=True)[:3]}")
+                
+                # Apply weight to this stem's scores
+                for ref_idx_str, score in query_hist.items():
+                    try:
+                        ref_idx = int(ref_idx_str)
+                        if ref_idx >= len(ref_lookup):
+                            print(f"WARNING: Reference index {ref_idx} exceeds lookup length {len(ref_lookup)}. Skipping.")
+                            continue
+                            
+                        ref_id = ref_lookup[ref_idx]
+                        combined_scores[(query_base_id, ref_id)] += score * weights[stem]
+                    except Exception as e:
+                        # print(f"Error processing reference {ref_idx_str}: {e}")
+                        continue
+        
+        except Exception as e:
+            print(f"Error processing {stem} stem: {e}")
+            traceback.print_exc()
+    
+    print(f"\nProcessed stems: {processed_stems}")
     
     # Create final rankings
+    print("\nGenerating final rankings")
     final_rankings = {}
-    for (q_id, _), _ in combined_scores.items():
+    
+    # Group scores by query ID
+    for (q_id, ref_id), score in combined_scores.items():
         if q_id not in final_rankings:
             final_rankings[q_id] = []
-            
-        # Get all refs for this query
-        refs = [(ref_id, combined_scores[(q_id, ref_id)]) for q_id, ref_id in combined_scores.keys() if q_id == q_id]
-        
-        # Sort by score
-        refs.sort(key=lambda x: x[1], reverse=True)
-        
-        # Store rankings
-        final_rankings[q_id] = [ref_id for ref_id, _ in refs]
+        final_rankings[q_id].append((ref_id, score))
+    
+    # Sort each query's references by score
+    for q_id in final_rankings:
+        final_rankings[q_id].sort(key=lambda x: x[1], reverse=True)
+        final_rankings[q_id] = [ref_id for ref_id, _ in final_rankings[q_id]]
+    
+    print(f"Generated rankings for {len(final_rankings)} queries")
+    
+    # Example of a few rankings
+    sample_queries = list(final_rankings.keys())[:3]
+    for q_id in sample_queries:
+        print(f"Query {q_id} top matches: {final_rankings[q_id][:3]}")
     
     # Evaluate final rankings
     hit_rates = evaluate_rankings(final_rankings, annotations)
@@ -575,8 +576,11 @@ def main():
 
     if args.query_lens is not None:
         args.query_lens = [float(q) for q in args.query_lens.split(',')]
+        print("Query lens:", args.query_lens)
         test_seq_len = [query_len_from_seconds(q, cfg['overlap'], dur=cfg['dur'])
                         for q in args.query_lens]
+
+        print("Test seq len: ", test_seq_len)
         
 
     for ckp_name, epochs in test_cfg.items():
@@ -598,56 +602,56 @@ def main():
                 continue
             
             fp_dir = create_fp_dir(resume=ckp, train=False)
-            if args.recompute or os.path.isfile(f'{fp_dir}/dummy_db.mm') is False:
-                print("=> Computing dummy fingerprints...")
-                create_dummy_db(dummy_db_loader, augment=test_augment,
-                                model=model, output_root_dir=fp_dir, verbose=True)
-            else:
-                print("=> Skipping dummy db creation...")
+            # if args.recompute or os.path.isfile(f'{fp_dir}/dummy_db.mm') is False:
+            #     print("=> Computing dummy fingerprints...")
+            #     create_dummy_db(dummy_db_loader, augment=test_augment,
+            #                     model=model, output_root_dir=fp_dir, verbose=True)
+            # else:
+            #     print("=> Skipping dummy db creation...")
 
-            create_ref_db(ref_db_loader, augment=test_augment,
-                            model=model, output_root_dir=fp_dir, verbose=True)
+            # create_ref_db(ref_db_loader, augment=test_augment,
+            #                 model=model, output_root_dir=fp_dir, verbose=True)
             
-            create_query_db(query_db_loader, augment=test_augment,
-                            model=model, output_root_dir=fp_dir, verbose=True)
+            # create_query_db(query_db_loader, augment=test_augment,
+            #                 model=model, output_root_dir=fp_dir, verbose=True)
             
-            if args.map:
-                create_query_db(query_full_db_loader, augment=test_augment,
-                                model=model, output_root_dir=fp_dir, fname='query_full_db', verbose=True)
+            # if args.map:
+            #     create_query_db(query_full_db_loader, augment=test_augment,
+            #                     model=model, output_root_dir=fp_dir, fname='query_full_db', verbose=True)
             
             
-            text = f'{args.text}_{str(epoch)}'
-            label = epoch if type(epoch) == int else 0
+            # text = f'{args.text}_{str(epoch)}'
+            # label = epoch if type(epoch) == int else 0
 
 
-            if args.query_lens is not None:
-                hit_rates = eval_faiss(emb_dir=fp_dir,
-                                    test_seq_len=test_seq_len, 
-                                    index_type=index_type,
-                                    nogpu=True) 
+            # if args.query_lens is not None:
+            #     hit_rates = eval_faiss(emb_dir=fp_dir,
+            #                         test_seq_len=test_seq_len, 
+            #                         index_type=index_type,
+            #                         nogpu=True) 
 
 
-                writer.add_text("table", 
-                                create_table(hit_rates, 
-                                            cfg['overlap'], cfg['dur'],
-                                            test_seq_len, text=text), 
-                                label)
+            #     writer.add_text("table", 
+            #                     create_table(hit_rates, 
+            #                                 cfg['overlap'], cfg['dur'],
+            #                                 test_seq_len, text=text), 
+            #                     label)
   
-            else:
-                hit_rates = eval_faiss(emb_dir=fp_dir, 
-                                    index_type=index_type,
-                                    nogpu=True)
+            # else:
+            #     hit_rates = eval_faiss(emb_dir=fp_dir, 
+            #                         index_type=index_type,
+            #                         nogpu=True)
                 
-                writer.add_text("table", 
-                                create_table(hit_rates, 
-                                            cfg['overlap'], cfg['dur'], text=text), 
-                                label)
+            #     writer.add_text("table", 
+            #                     create_table(hit_rates, 
+            #                                 cfg['overlap'], cfg['dur'], text=text), 
+            #                     label)
                 
-            print("-------Test hit-rates-------")
-            # Create table
-            print(f'Top-1 exact hit rate = {hit_rates[0]}')
-            print(f'Top-3 exact hit rate = {hit_rates[1]}')
-            print(f'Top-10 exact hit rate = {hit_rates[2]}')
+            # print("-------Test hit-rates-------")
+            # # Create table
+            # print(f'Top-1 exact hit rate = {hit_rates[0]}')
+            # print(f'Top-3 exact hit rate = {hit_rates[1]}')
+            # print(f'Top-10 exact hit rate = {hit_rates[2]}')
             
             if args.map:
                 map_score, k_map = eval_faiss_with_map(emb_dir=fp_dir, 
@@ -669,7 +673,7 @@ def main():
                 with open(annot_path, 'r') as fp:
                     annotations = json.load(fp)
                 
-                hit_rates, final_rankings = combine_stem_results(stem_results, annotations)
+                hit_rates, final_rankings = combine_stem_results(stem_results, annotations, output_root_dir=fp_dir)
                 
                 print("\n=== Combined Stem Results ===")
                 print(f'Top-1 exact hit rate = {hit_rates[0]}')
