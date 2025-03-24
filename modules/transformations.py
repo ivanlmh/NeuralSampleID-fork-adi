@@ -194,6 +194,9 @@ class GPUTransformAdditiveSampleid(nn.Module):
         self.chorus = Chorus(**self.effects_config["chorus"])
         self.reverb = Reverb(**self.effects_config["reverb"])
         self.distortion = Distortion(**self.effects_config["distortion"])
+        self.chorus_prob = float(cfg.get("chorus_prob", 0.5))
+        self.reverb_prob = float(cfg.get("reverb_prob", 0.5))
+        self.distortion_prob = float(cfg.get("distortion_prob", 0.5))
 
         self.mix_prob = float(cfg.get("mix_prob", 0.95))
         self.mix_gain_range = cfg.get("mix_gain_range", [0.05, 0.5])  # Narrower range
@@ -302,11 +305,11 @@ class GPUTransformAdditiveSampleid(nn.Module):
 
             # Create random effect chain for this sample
             active_effects = []
-            if torch.rand(1).item() < 0.5:
+            if torch.rand(1).item() < self.chorus_prob:
                 active_effects.append(self.chorus)
-            if torch.rand(1).item() < 0.5:
+            if torch.rand(1).item() < self.reverb_prob:
                 active_effects.append(self.reverb)
-            if torch.rand(1).item() < 0.5:
+            if torch.rand(1).item() < self.distortion_prob:
                 active_effects.append(self.distortion)
 
             if active_effects:
@@ -314,7 +317,7 @@ class GPUTransformAdditiveSampleid(nn.Module):
                 audio = board.process(audio, self.sample_rate)
 
             # Mix with another random sample from batch if desired
-            if torch.rand(1).item() < 0.95:
+            if torch.rand(1).item() < self.mix_prob:
                 # Choose random sample from batch (not self)
                 other_idx = (i + torch.randint(1, batch_size, (1,)).item()) % batch_size
                 other_audio = batch_audio[other_idx].cpu().numpy()  # TODO: WHY CPU?

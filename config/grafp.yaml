@@ -48,14 +48,14 @@ blur_kernel: [7,7]  # blur kernel size
 train_sz: 8000
 val_sz: 25000
 
-bsz_train: 512 #32 #256 # Batch size
+bsz_train: 512 #1024 #512 #128 #512 #32 #256 # Batch size
 # peak_stride: 2
 
 n_filters : 8 # number of filters in the peak extraction layer
 patch_frames: 8
 patch_bins: 4
 tau: 0.05
-lr: 1.0e-5 #8.0e-5
+lr: 8.0e-5 #8.0e-5
 min_lr: 7.0e-7
 n_epochs: 400
 T_max: 400
@@ -64,17 +64,21 @@ error_threshold: 5
 
 weight_decay: 0 #1.0e-6 # 0 is the same as no weight decay
 
-# stem: 'drums'
-# SampleID train hyperparameters
-mix_prob: 0.95
-mix_gain_range: [0.25, 0.75] #[0.1, 0.7] #[0.05, 0.55]
-min_beats_required: 32
+# # stem: 'drums'
+# # SampleID train hyperparameters
+# mix_prob: 0.95
+# mix_gain_range: [0.25, 0.75] #[0.1, 0.7] #[0.05, 0.55]
+# min_beats_required: 32
 
 # SampleID train hyperparameters
 mix_prob: 0.95
-mix_gain_range: [0.1, 0.7] #[0.05, 0.55]
+mix_gain_range: [0.1, 0.65] #[0.05, 0.55]
 min_beats_required: 32 # minimum number of beats required in a sample to be included in the dataset
-tempo_ratio_range: [0.5, 2.0] #[0.75, 1.5]
+tempo_ratio_range: [0.75, 1.5] #[0.5, 2.0] #
+
+chorus_prob: 0.0
+reverb_prob: 0.0
+distortion_prob: 0.0
 
 # Augmentation hyperparameters
 n_frames: 128 # depends on the spectrogram parameters
