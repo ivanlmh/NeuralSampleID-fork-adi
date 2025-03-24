@@ -300,13 +300,18 @@ def eval_faiss(emb_dir,
         max_len = int(max_test_seq_len[ti])
         max_query_len = test_seq_len[test_seq_len <= max_len]
 
+        # For each query segment length
         for si, sl in enumerate(max_query_len):
 
+            # Create histogram for this query
             hist = defaultdict(int)
             assert test_id <= len(query)
+
+            # Extract query vector and ID
             q = query[test_id:(test_id + sl), :] # shape(q) = (length, dim)
             q_id = query_lookup[test_id].split("_")[0]    # query ID; split to remove the segment number
 
+            # Search for similar vectors
             # segment-level top k search for each segment
             _, I = index.search(
                 q, k_probe) # _: distance, I: result IDs matrix
@@ -317,6 +322,7 @@ def eval_faiss(emb_dir,
 
             candidates = I[np.where(I >= 0)].flatten()
     
+            # Calculate matching scores and store in histogram
             """ Song-level match score """
             for ci, cid in enumerate(candidates):
                 if cid < dummy_db_shape[0]:
@@ -338,8 +344,11 @@ def eval_faiss(emb_dir,
                 # hist[match] += 1
 
             """ Evaluate """
-            # print(f"histogram for {q_id}; sl = {sl}: {dict(hist)}")
+            print(f"histogram for {q_id}; sl = {sl}: {dict(hist)}")
+            print("hist.get", hist.get)
             pred = sorted(hist, key=hist.get, reverse=True)
+            print("pred len", len(pred))
+            print("pred", pred)
             
             if return_histograms:
                 query_histograms.append(dict(hist))
