@@ -44,6 +44,7 @@ class NeuralSampleIDDataset(Dataset):
 
     def __getitem__(self, idx):
 
+        np.random.seed(42)
         idx = self._get_safe_index(idx)
 
         # Check if ignore_index is empty

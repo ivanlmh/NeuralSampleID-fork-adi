@@ -13,6 +13,7 @@ class BandEQ:
         """
         Band EQ using multiple band-pass filters with adjustable frequency, Q, and gain.
         """
+        np.random.seed(42)
         self.num_bands = np.random.randint(num_bands[0], num_bands[1] + 1)
         self.min_center_freq = center_freq[0]
         self.max_center_freq = center_freq[1]
@@ -106,7 +107,7 @@ class Compressor(BaseWaveformTransform):
         Randomize compression parameters if the transform should apply.
         """
         super().randomize_parameters(samples, sample_rate)
-
+        random.seed(42)
         if self.parameters["should_apply"]:
             self.parameters.update({
                 "threshold": convert_decibels_to_amplitude_ratio(

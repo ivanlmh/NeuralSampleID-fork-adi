@@ -277,7 +277,11 @@ def create_query_nmatrix(dataloader, augment, model, save_path, max_size=512, ve
     np.save(save_path, query_nmatrix)
     print(f"Saved node matrices for {len(query_nmatrix)} queries in {save_path}")
 
-
+def seed_worker(worker_id):
+    worker_seed = 42
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
 
 def main():
 
@@ -295,6 +299,24 @@ def main():
     # Hyperparameters
     random_seed = 42
     shuffle_dataset =True
+
+
+    # Set environment variable for CuBLAS deterministic operations
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed_all(random_seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    os.environ['PYTHONHASHSEED'] = str(random_seed)
+    # torch.use_deterministic_algorithms(True)
+
+    g = torch.Generator()
+    g.manual_seed(random_seed)
+
 
 
     print("Creating new model...")
@@ -325,6 +347,9 @@ def main():
         print(f"=> No classifier checkpoint found at '{clf_ckpt}'")
 
 
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     print("Creating dataloaders ...")
 
     # Augmentation for testing with specific noise subsets
@@ -346,20 +371,28 @@ def main():
 
     # Create DataLoader instances for each dataset
     dummy_db_loader = DataLoader(dummy_dataset, batch_size=1, 
-                                shuffle=False, num_workers=4, 
-                                pin_memory=True, drop_last=False)
+                                shuffle=False, num_workers=1, 
+                                pin_memory=True, drop_last=False,
+                                worker_init_fn=seed_worker,
+                                generator=g)
 
     query_db_loader = DataLoader(query_dataset, batch_size=1, 
-                                shuffle=False, num_workers=4, 
-                                pin_memory=True, drop_last=False)
+                                shuffle=False, num_workers=1, 
+                                pin_memory=True, drop_last=False,
+                                worker_init_fn=seed_worker,
+                                generator=g)
     
     query_full_db_loader = DataLoader(query_full_dataset, batch_size=1, 
-                                shuffle=False, num_workers=4, 
-                                pin_memory=True, drop_last=False)
+                                shuffle=False, num_workers=1, 
+                                pin_memory=True, drop_last=False,
+                                worker_init_fn=seed_worker,
+                                generator=g)
 
     ref_db_loader = DataLoader(ref_dataset, batch_size=1, 
-                            shuffle=False, num_workers=4, 
-                            pin_memory=True, drop_last=False)
+                            shuffle=False, num_workers=1, 
+                            pin_memory=True, drop_last=False,
+                            worker_init_fn=seed_worker,
+                            generator=g)
     
 
 
@@ -375,6 +408,8 @@ def main():
                         for q in args.query_lens]
         
 
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     for ckp_name, epochs in test_cfg.items():
         if not type(epochs) == list:
             epochs = [epochs]   # Hack to handle case where only best ckp is to be tested

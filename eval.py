@@ -65,6 +65,10 @@ def get_index(index_type,
     References:
         https://github.com/facebookresearch/faiss/wiki/Faiss-indexes
     """
+    np.random.seed(42)
+    faiss.omp_set_num_threads(1)
+    # faiss.omp_get_max_threads(1)
+
     # GPU Setup
     if use_gpu:
         GPU_RESOURCES = faiss.StandardGpuResources()
@@ -90,11 +94,18 @@ def get_index(index_type,
         # Using IVF index
         nlist = 400
         index = faiss.IndexIVFFlat(index, d, nlist)
+
+        # Set FAISS seed for IVF
+        index.seed = 42
     elif mode == 'ivfpq':
         # Using IVF-PQ index
         code_sz = 64 # power of 2
         nbits = 8  # nbits must be 8, 12 or 16, The dimension d should be a multiple of M.
         index = faiss.IndexIVFPQ(index, d, n_centroids, code_sz, nbits)
+
+        # Set seeds for both IVF and PQ components
+        index.seed = 42
+        index.pq.seed = 42
 
     elif mode == 'lsh':
         # Using LSH index
@@ -207,6 +218,7 @@ def eval_faiss(emb_dir,
     """
     Segment/sequence-wise audio search experiment and evaluation: implementation based on FAISS.
     """
+    np.random.seed(42)
     if type(test_seq_len) == str:
         test_seq_len = np.asarray(
             list(map(int, test_seq_len.split())))  # '1 3 5' --> [1, 3, 5]
@@ -234,6 +246,7 @@ def eval_faiss(emb_dir,
     • The set of ground truth IDs for q[i] will be (i + len(dummy_db))
     ---------------------------------------------------------------------- """
     # Create and train FAISS index
+    np.random.seed(42)
     index = get_index(index_type, dummy_db, dummy_db.shape, (not nogpu),
                       max_train, n_centroids=n_centroids)
 
@@ -289,6 +302,7 @@ def eval_faiss(emb_dir,
     top10_exact = np.zeros((n_test, len(test_seq_len))).astype(np.int_)
 
     start_time = time.time()
+    np.random.seed(42)
     for ti, test_id in enumerate(test_ids):
 
         # Limit test_seq_len to max_test_seq_len
@@ -334,7 +348,10 @@ def eval_faiss(emb_dir,
 
             """ Evaluate """
             # print(f"histogram for {q_id}; sl = {sl}: {dict(hist)}")
-            pred = sorted(hist, key=hist.get, reverse=True)
+            # pred = sorted(hist, key=hist.get, reverse=True)
+            # Use a more deterministic approach with tie-breaking:
+            pred = sorted(hist.items(), key=lambda x: (x[1], x[0]), reverse=True)
+            pred = [x[0] for x in pred]
             
             if pred:
                 # Top-1 hit: 

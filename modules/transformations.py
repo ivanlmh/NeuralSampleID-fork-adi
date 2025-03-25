@@ -27,7 +27,7 @@ class GPUTransformSampleID(nn.Module):
         self.train = train
         self.cpu = cpu
         self.cfg = cfg
-
+        np.random.seed(42)
         # Maximum number of transforms to apply
         self.max_transforms_1 = max_transforms_1
         self.max_transforms_2 = max_transforms_2
@@ -84,6 +84,8 @@ class GPUTransformSampleID(nn.Module):
 
     def apply_random_transforms(self, audio, transform_options, max_transforms):
 
+        np.random.seed(42)
+        
         if len(transform_options) == 0 or max_transforms <= 0:
             return audio
 
