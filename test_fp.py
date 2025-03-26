@@ -63,6 +63,10 @@ parser.add_argument('--k', default=5, type=int)
 parser.add_argument('--test_ids', default='1000', type=str)
 parser.add_argument('--clf_ckp', default='clf_test_best.pth', type=str)
 
+
+parser.add_argument('--sample_class', default=None, type=str, 
+                    help='Filter evaluation to specific sample class (e.g., "beat", "riff", "interpolation_no", "interpolation_maybe", "high_time_stretching", "low_time_stretching")')
+
 device = torch.device('cuda' if torch.cuda.is_available else 'cpu')
 
 
@@ -491,12 +495,17 @@ def main():
                 map_score, k_map = eval_faiss_map_clf(emb_dir=fp_dir, 
                                         classifier=classifier,
                                         index_type='ivfpq',
+                                        sample_class=args.sample_class,
                                         nogpu=True)
 
 
 
                 print("-------Test MAP-------")
-                print(f'Mean Average Precision (MAP@{k_map}): {map_score:.4f}')
+                if args.sample_class:
+                    print(f'Mean Average Precision for sample type "{args.sample_class}" (MAP@{k_map}): {map_score:.4f}')
+                else:
+                    print(f'Mean Average Precision (MAP@{k_map}): {map_score:.4f}')
+                # print(f'Mean Average Precision (MAP@{k_map}): {map_score:.4f}')
 
 
 if __name__ == '__main__':
