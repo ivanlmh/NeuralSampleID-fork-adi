@@ -6795,5 +6795,19 @@
         "ref_file": "T050",
         "start_time": 150.440634921,
         "end_time": 152.706031746
+    },
+    {
+        "sample_id": "S032",
+        "query_file": "T053",
+        "ref_file": "T052",
+        "start_time": -1,
+        "end_time": -1
+    },
+    {
+        "sample_id": "S082",
+        "query_file": "T150",
+        "ref_file": "T151",
+        "start_time": -1,
+        "end_time": -1
     }
 ]
